@@ -137,6 +137,8 @@ def main():
         transform, args.normalize, args.balance, args.split_index)
     print('Datasets train:{}, val:{}'.format(
         len(train_dset.df), len(val_dset.df)))
+    print(
+        f"Weight of each class, no tumor: {balance_weight_neg_pos[0]}, tumor: {balance_weight_neg_pos[1]}")
 
     # Set loss criterion
     if args.balance:
