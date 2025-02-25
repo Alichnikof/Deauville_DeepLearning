@@ -10,11 +10,11 @@ from sklearn.metrics import roc_auc_score
 import torch.nn.functional as F
 from scipy import interpolate
 
-data_path_img = r"C:\Users\alime\Dropbox (AMC)\Mon PC (DESKTOP-RG9FHVT)\Desktop\Deauville\Deauville_DeepLearning"
+data_path_img = r"C:\Users\mezher\Desktop\Deauville_DeepLearning\images"
 
-data_file = r"C:\Users\alime\Dropbox (AMC)\Mon PC (DESKTOP-RG9FHVT)\Desktop\Deauville\Deauville_DeepLearning\data.csv"
+data_file = r"C:\Users\mezher\Desktop\Deauville_DeepLearning\images"
 # this is the size (310x310) of the MIP images used in the paper. Adjust to fit your images.
-image_size = 200
+image_size = 310
 
 
 def get_datasets_singleview(transform=None, norm=None, balance=False, split_index=0):
