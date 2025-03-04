@@ -11,6 +11,8 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import numpy as np
 import time
+import matplotlib.pyplot as plt
+
 
 parser = argparse.ArgumentParser(description='PET lymphoma classification')
 
@@ -57,9 +59,28 @@ parser.add_argument('--lr_scheduler', action='store_true',
                     default=False, help='decrease LR on platau')
 parser.add_argument('--early_stopping', action='store_true',
                     default=False, help='use early stopping')
+parser.add_argument('--finetune', action='store_true', default=False,
+                    help='if set, only fine tune the classifier (fc) and freeze the backbone')
+
+
+def validate_loss(loader, model, criterion):
+    """Compute average loss over the validation set."""
+    model.eval()
+    running_loss = 0.
+    with torch.no_grad():
+        for i, (input, target) in enumerate(loader):
+            input = input.cuda()
+            target_1hot = F.one_hot(target.long(), num_classes=2).cuda()
+            y = model(input)
+            loss = criterion(y, target_1hot.float())
+            running_loss += loss.item() * input.size(0)
+    return running_loss / len(loader.dataset)
+
+
 
 
 def main():
+    
     # Get user input
     global args
     args = parser.parse_args()
@@ -80,31 +101,52 @@ def main():
     if args.checkpoint:
         ch = torch.load(args.checkpoint)
         model_dict = model.state_dict()
-        pretrained_dict = {k: v for k,
-                           v in ch['state_dict'].items() if k in model_dict}
-        print(
-            'Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
+        if 'state_dict' in ch:
+            pretrained_dict = {k: v for k, v in ch['state_dict'].items() if k in model_dict}
+        else:
+            pretrained_dict = {k: v for k, v in ch.items() if k in model_dict}
+        print('Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
         model_dict.update(pretrained_dict)
         model.load_state_dict(model_dict)
+
+
     if args.resume:
-        ch = torch.load(os.path.join(args.output, 'checkpoint_split' +
-                        str(args.split_index)+'_run'+str(args.run)+'.pth'))
+        resume_path = os.path.join(args.output, 'checkpoint_split' + str(args.split_index) + '_run' + str(args.run) + '.pth')
+        with torch.serialization.safe_globals(["numpy._core.multiarray.scalar"]):
+            ch = torch.load(resume_path, weights_only=False)
         model_dict = model.state_dict()
-        pretrained_dict = {k: v for k,
-                           v in ch['state_dict'].items() if k in model_dict}
-        print(
-            'Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
+        if 'state_dict' in ch:
+            pretrained_dict = {k: v for k, v in ch['state_dict'].items() if k in model_dict}
+        else:
+            pretrained_dict = {k: v for k, v in ch.items() if k in model_dict}
+        print('Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
         model_dict.update(pretrained_dict)
         model.load_state_dict(model_dict)
 
-    # Set optimizer
-    optimizer = utils.create_optimizer(
-        model, args.optimizer, args.lr, args.momentum, args.wd)
-    if args.resume and 'optimizer' in ch:
-        optimizer.load_state_dict(ch['optimizer'])
-        print('Loaded optimizer state')
-    cudnn.benchmark = True
+    # Fine-tuning option: freeze all layers except the classifier (model.fc)
+    if args.finetune:
+        for param in model.parameters():
+            param.requires_grad = False  # freeze all parameters
+        for param in model.fc.parameters():
+            param.requires_grad = True   # unfreeze the classifier
+        print("Fine-tuning mode enabled: only training the classifier (fc) layer.")
+    else:
+        print("Training all layers (from scratch or retraining the full model).")
 
+    # Create optimizer only for parameters with requires_grad=True
+    optimizer = utils.create_optimizer(
+        list(filter(lambda p: p.requires_grad, model.parameters())),
+        args.optimizer, args.lr, args.momentum, args.wd
+    )
+
+    # Set optimizer using only trainable parameters
+    optimizer = utils.create_optimizer(
+        list(filter(lambda p: p.requires_grad, model.parameters())),
+        args.optimizer, args.lr, args.momentum, args.wd)
+
+    # (Resume optimizer state if needed)
+    cudnn.benchmark = True
+    
     # Augmentations
     flipHorVer = dataset.RandomFlip()
     flipLR = dataset.RandomFlipLeftRight()
@@ -140,13 +182,14 @@ def main():
     print(
         f"Weight of each class, no tumor: {balance_weight_neg_pos[0]}, tumor: {balance_weight_neg_pos[1]}")
 
+
     # Set loss criterion
     if args.balance:
         w = torch.Tensor(balance_weight_neg_pos)
         print('Balance loss with weights:', balance_weight_neg_pos)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=w).to("cpu")
+        criterion = nn.BCEWithLogitsLoss(pos_weight=w).cuda()
     else:
-        criterion = nn.BCEWithLogitsLoss().to("cpu")
+        criterion = nn.BCEWithLogitsLoss().cuda()
 
     # Early stopping
     lr_scheduler = None
@@ -158,6 +201,7 @@ def main():
         if args.resume and 'lr_scheduler' in ch:
             lr_scheduler.lr_scheduler.load_state_dict(ch['lr_scheduler'])
             print('Loaded lr_scheduler state')
+
     if args.early_stopping:
         print('INFO: Initializing early stopping')
         early_stopping = EarlyStopping()
@@ -170,20 +214,16 @@ def main():
             print('Loaded early_stopping state')
 
     # Set loaders
-    train_loader = torch.utils.data.DataLoader(
-        train_dset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    trainval_loader = torch.utils.data.DataLoader(
-        trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
-    val_loader = torch.utils.data.DataLoader(
-        val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+    trainval_loader = torch.utils.data.DataLoader(trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    val_loader = torch.utils.data.DataLoader(val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
 
-    # Set output files
-    convergence_name = 'convergence_split' + \
-        str(args.split_index)+'_run'+str(args.run)+'.csv'
+    
+    # Set output file for convergence
+    convergence_name = 'convergence_split' + str(args.split_index) + '_run' + str(args.run) + '.csv'
     if not args.resume:
-        fconv = open(os.path.join(args.output, convergence_name), 'w')
-        fconv.write('epoch,split,metric,value\n')
-        fconv.close()
+        with open(os.path.join(args.output, convergence_name), 'w') as fconv:
+            fconv.write('epoch,split,metric,value\n')
 
     # Main training loop
     if args.resume:
@@ -193,41 +233,38 @@ def main():
 
     for epoch in epochs:
         if args.optimizer == 'sgd':
-            utils.adjust_learning_rate(
-                optimizer, epoch, args.lr_anneal, args.lr)
+            utils.adjust_learning_rate(optimizer, epoch, args.lr_anneal, args.lr)
 
-        # Training logic
+        # Training
         if epoch > 0:
             loss = train(epoch, train_loader, model, criterion, optimizer)
         else:
             loss = np.nan
-        # Printing stats
-        fconv = open(os.path.join(args.output, convergence_name), 'a')
-        fconv.write('{},train,loss,{}\n'.format(epoch, loss))
-        fconv.close()
+        # Log training loss
+        with open(os.path.join(args.output, convergence_name), 'a') as fconv:
+            fconv.write('{},train,loss,{}\n'.format(epoch, loss))
 
-        # Validation logic
-        # Evaluate on train data
+        # Validation: compute metrics via test() and also compute validation loss
         train_probs = test(epoch, trainval_loader, model)
-        train_auc, train_ber, train_fpr, train_fnr = train_dset.errors(
-            train_probs)
-        # Evaluate on validation set
+        train_auc, train_ber, train_fpr, train_fnr = train_dset.errors(train_probs)
         val_probs = test(epoch, val_loader, model)
         val_auc, val_ber, val_fpr, val_fnr = val_dset.errors(val_probs)
+        val_loss = validate_loss(val_loader, model, criterion)
 
-        print('Epoch: [{}/{}]\tLoss: {:.6f}\tAUC: {:.4f}\t{:.4f}'.format(epoch,
-              args.nepochs, loss, train_auc, val_auc))
+        print('Epoch: [{}/{}]\tLoss: {:.6f}\tTrain AUC: {:.4f}\tVal AUC: {:.4f}'.format(epoch, args.nepochs, loss, train_auc, val_auc))
 
-        fconv = open(os.path.join(args.output, convergence_name), 'a')
-        fconv.write('{},train,auc,{}\n'.format(epoch, train_auc))
-        fconv.write('{},train,ber,{}\n'.format(epoch, train_ber))
-        fconv.write('{},train,fpr,{}\n'.format(epoch, train_fpr))
-        fconv.write('{},train,fnr,{}\n'.format(epoch, train_fnr))
-        fconv.write('{},validation,auc,{}\n'.format(epoch, val_auc))
-        fconv.write('{},validation,ber,{}\n'.format(epoch, val_ber))
-        fconv.write('{},validation,fpr,{}\n'.format(epoch, val_fpr))
-        fconv.write('{},validation,fnr,{}\n'.format(epoch, val_fnr))
-        fconv.close()
+        # Log validation metrics including loss
+        with open(os.path.join(args.output, convergence_name), 'a') as fconv:
+            fconv.write('{},train,auc,{}\n'.format(epoch, train_auc))
+            fconv.write('{},train,ber,{}\n'.format(epoch, train_ber))
+            fconv.write('{},train,fpr,{}\n'.format(epoch, train_fpr))
+            fconv.write('{},train,fnr,{}\n'.format(epoch, train_fnr))
+            fconv.write('{},validation,loss,{}\n'.format(epoch, val_loss))
+            fconv.write('{},validation,auc,{}\n'.format(epoch, val_auc))
+            fconv.write('{},validation,ber,{}\n'.format(epoch, val_ber))
+            fconv.write('{},validation,fpr,{}\n'.format(epoch, val_fpr))
+            fconv.write('{},validation,fnr,{}\n'.format(epoch, val_fnr))
+
 
         # Create checkpoint dictionary
         obj = {
@@ -258,12 +295,12 @@ def test(epoch, loader, model):
     # Set model in test mode
     model.eval()
     # Initialize probability vector
-    probs = torch.FloatTensor(len(loader.dataset)).to("cpu")
+    probs = torch.FloatTensor(len(loader.dataset)).cuda()
     # Loop through batches
     with torch.no_grad():
         for i, (input, _) in enumerate(loader):
             # Copy batch to GPU
-            input = input.to("cpu")
+            input = input.cuda()
             # Forward pass
             y = model(input)  # features, probabilities
             p = F.softmax(y, dim=1)
@@ -281,8 +318,8 @@ def train(epoch, loader, model, criterion, optimizer):
     # Loop through batches
     for i, (input, target) in enumerate(loader):
         # Copy to GPU
-        input = input.to("cpu")
-        target_1hot = F.one_hot(target.long(), num_classes=2).to("cpu")
+        input = input.cuda()
+        target_1hot = F.one_hot(target.long(), num_classes=2).cuda()
         # Forward pass
         y = model(input)  # features, probabilities
         # Calculate loss
@@ -298,3 +335,4 @@ def train(epoch, loader, model, criterion, optimizer):
 
 if __name__ == '__main__':
     main()
+

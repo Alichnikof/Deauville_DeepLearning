@@ -589,7 +589,7 @@ def visualize_augmentations(image, n_samples=5):
     plt.tight_layout()
     plt.show()
     
-    
+# %%
 def preprocess_pet_series(series_data, new_spacing=[4, 4, 4], bbox_percentile=80):
     """
     Applies the full preprocessing pipeline to a single PET series.
@@ -609,11 +609,11 @@ def preprocess_pet_series(series_data, new_spacing=[4, 4, 4], bbox_percentile=80
     raw_volume = series_data["volume"]
     ds_list = series_data["metadata_list"]
 
-    # If the raw volume has more than 350 slices (full-body scan), crop to the first 350 slices.
-    if raw_volume.shape[0] > 350:
-        print("Raw volume has more than 350 slices. Cropping to first 350 slices.")
-        raw_volume = raw_volume[:350, :, :]
-        ds_list = ds_list[:350]  # Ensure the metadata list matches the cropped volume
+    # If the raw volume has more than 400 slices (full-body scan), crop to the first 400 slices.
+    if raw_volume.shape[0] > 400:
+        print("Raw volume has more than 400 slices. Cropping to first 400 slices.")
+        raw_volume = raw_volume[:400, :, :]
+        ds_list = ds_list[:400]  # Ensure the metadata list matches the cropped volume
 
     # ---------------------------
     # Step A: Convert Raw Volume to SUV Volume
@@ -656,3 +656,5 @@ def preprocess_pet_series(series_data, new_spacing=[4, 4, 4], bbox_percentile=80
         "mip_sagittal": bbox_sagittal,
         "suv_volume": suv_volume_resampled
     }
+
+# %%

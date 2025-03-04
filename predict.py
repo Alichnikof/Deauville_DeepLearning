@@ -24,6 +24,8 @@ parser.add_argument('--nfeat', type=int, default=512, help='number of embedded f
 parser.add_argument('--batch_size', type=int, default=200, help='how many images to sample per slide (default: 200)')
 parser.add_argument('--workers', default=10, type=int, help='number of data loading workers (default: 10)')
 
+
+
 def main():
     # Get user input
     global args

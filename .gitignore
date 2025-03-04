@@ -16,7 +16,16 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+data.csv
+
 
 images/
 data/
 2025-02__Studies/
+PET/
+thesis/
+
+results/
+pred/
+trained_model/
+

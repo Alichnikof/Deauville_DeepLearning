@@ -10,13 +10,17 @@ import numpy as np
 def model_prediction(chpnt):
     model = my_model()
     ch = torch.load(chpnt)
-    model.load_state_dict(ch['state_dict'])
+    if 'state_dict' in ch:
+        model.load_state_dict(ch['state_dict'])
+    else:
+        model.load_state_dict(ch)
+
     return model
 
 
 def get_model():
     model = my_model()
-    model = model.to("cpu")
+    model = model.cuda()
     return model
 
 # Function that returns the model
@@ -57,14 +61,19 @@ class my_model(nn.Module):
 
 # Function that creates the optimizer
 
+def create_optimizer(model_or_params, mode, lr, momentum, wd):
+    # If the input has a 'parameters' method, use that; otherwise assume it's a list of parameters.
+    if hasattr(model_or_params, 'parameters'):
+        params = model_or_params.parameters()
+    else:
+        params = model_or_params
 
-def create_optimizer(model, mode, lr, momentum, wd):
     if mode == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr,
+        optimizer = optim.SGD(params, lr,
                               momentum=momentum, dampening=0,
                               weight_decay=wd, nesterov=True)
     elif mode == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=lr,
+        optimizer = optim.Adam(params, lr=lr,
                                weight_decay=wd)
     return optimizer
 
@@ -143,3 +152,10 @@ class LRScheduler():
 
     def __call__(self, val_loss):
         self.lr_scheduler.step(val_loss)
+
+
+if __name__ == '__main__':
+    model = my_model().cuda()
+    print(model)
+    from torchinfo import summary
+    summary(model, input_size=(12, 1, 224, 224))
