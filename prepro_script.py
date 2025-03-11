@@ -609,9 +609,9 @@ def preprocess_pet_series(series_data, new_spacing=[4, 4, 4], bbox_percentile=80
     raw_volume = series_data["volume"]
     ds_list = series_data["metadata_list"]
 
-    # If the raw volume has more than 400 slices (full-body scan), crop to the first 400 slices.
+    # If the raw volume has more than 400 slices (full-body scan), crop to the first 350 slices.
     if raw_volume.shape[0] > 400:
-        print("Raw volume has more than 400 slices. Cropping to first 400 slices.")
+        print("Raw volume has more than 350 slices. Cropping to first 350 slices.")
         raw_volume = raw_volume[:400, :, :]
         ds_list = ds_list[:400]  # Ensure the metadata list matches the cropped volume
 

@@ -148,7 +148,7 @@ class dataset_singleview(torch.utils.data.Dataset):
     def errors(self, probs):
         df = self.df.copy()
         df['p'] = probs
-        df['pred'] = (df.p >= 0.5).astype(int)
+        df['pred'] = (df.p >= 0.3).astype(int)
         fpr = ((df.pred != df.target) & (df.target == 0)
                ).sum() / (df.target == 0).sum()
         fnr = ((df.pred != df.target) & (df.target == 1)
@@ -177,7 +177,7 @@ class dataset_singleview_center(torch.utils.data.Dataset):
     def errors(self, probs):
         df = self.df.copy()
         df['p'] = probs
-        df['pred'] = (df.p >= 0.5).astype(int)
+        df['pred'] = (df.p >= 0.3).astype(int)
         fpr = ((df.pred != df.target) & (df.target == 0)
                ).sum() / (df.target == 0).sum()
         fnr = ((df.pred != df.target) & (df.target == 1)

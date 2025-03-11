@@ -58,7 +58,63 @@ class my_model(nn.Module):
         if not self.flat:
             o = o.view(x.size(0), -1)
         return f, o
+    
+class my_model_multitask(nn.Module):
+        
+    def __init__(self):
+            
+        super(my_model_multitask, self).__init__()
+        # Load a ResNet34 model pretrained on ImageNet.
+        model = models.resnet34(weights='DEFAULT')
+        # Adjust the first conv layer to accept single-channel input.
+        conv1 = model.conv1.weight.detach().clone().mean(dim=1, keepdim=True)
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        model.conv1.weight.data = conv1
+        # Remove the original fully-connected layer.
+        # We'll use the feature extractor (all layers except the final FC).
+        self.features = nn.Sequential(*list(model.children())[:-1])
+        in_features = model.fc.in_features
+        
+        # Original classifier head (for binary classification)
+        self.fc = nn.Linear(in_features, 2)
+        
+        # Additional classifier head for lesion localization (51 classes)
+        self.fc_loc = nn.Linear(in_features, 51)
+        
+        # Flag to indicate if we need to flatten the features (typically True)
+        self.flat = True
 
+    def forward(self, x):
+        # Shared feature extraction
+        features = self.features(x)
+        if self.flat:
+            features = features.view(x.size(0), -1)
+        
+        # Original task output
+        output_class = self.fc(features)
+        
+        # Localization branch output
+        # Option A: Allow joint training (both heads update the shared features)
+        output_loc = self.fc_loc(features)
+        # Option B: Detach the features to avoid influencing the shared backbone with localization gradients:
+        # output_loc = self.fc_loc(features.detach())
+        
+        return output_class, output_loc
+    
+    def forward_feat(self, x):
+        features = self.features(x)
+        if self.flat:
+            features = features.view(x.size(0), -1)
+        output_class = self.fc(features)
+        output_loc = self.fc_loc(features)
+        return features, output_class, output_loc
+
+
+# Optionally, add a helper function to instantiate the multitask model:
+def get_model_multitask():
+    model = my_model_multitask()
+    model = model.cuda()
+    return model
 # Function that creates the optimizer
 
 def create_optimizer(model_or_params, mode, lr, momentum, wd):
