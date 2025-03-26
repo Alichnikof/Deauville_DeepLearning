@@ -1,4 +1,4 @@
-import dataset
+import splitting.dataset as dataset
 import utils
 from utils import EarlyStopping, LRScheduler
 import os
@@ -13,26 +13,35 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 
+from torch.utils.data import  WeightedRandomSampler
 
 parser = argparse.ArgumentParser(description='PET lymphoma classification')
 
 # I/O PARAMS
-parser.add_argument('--output', type=str, default='results',
+parser.add_argument('--output', type=str, default='training_results',
                     help='name of output folder (default: "results")')
 
 # MODEL PARAMS
-parser.add_argument('--normalize', action='store_true',
-                    default=False, help='normalize images')
+parser.add_argument('--normalize', action='store_true', default=True,
+                    help='normalize images')
 parser.add_argument('--checkpoint', default='', type=str,
                     help='model checkpoint if any (default: none)')
-parser.add_argument('--resume', action='store_true',
-                    default=False, help='resume from checkpoint')
+parser.add_argument('--resume', action='store_true', default=False,
+                    help='resume from checkpoint')
+
+# New arguments for classifier architecture
+parser.add_argument('--cls_arch', type=str, default='simple', choices=['simple', 'complex'],
+                    help='Classifier architecture: "simple" (default) or "complex"')
+parser.add_argument('--hidden_dim', type=int, default=256,
+                    help='Hidden dimension for complex classifier (if used)')
+parser.add_argument('--dropout', type=float, default=0.3,
+                    help='Dropout rate for complex classifier (if used)')
 
 # OPTIMIZATION PARAMS
 parser.add_argument('--optimizer', default='sgd', type=str,
                     help='The optimizer to use (default: sgd)')
-parser.add_argument('--lr', type=float, default=1e-3,
-                    help='learning rate (default: 1e-3)')
+parser.add_argument('--lr', type=float, default=1e-2,
+                    help='learning rate (default: 1e-2)')
 parser.add_argument('--lr_anneal', type=int, default=15,
                     help='period for lr annealing (default: 15). Only works for SGD')
 parser.add_argument('--momentum', default=0.9, type=float,
@@ -53,14 +62,20 @@ parser.add_argument('--workers', default=4, type=int,
                     help='number of data loading workers (default: 10)')
 parser.add_argument('--augm', default=0, type=int, choices=[0, 1, 2, 3, 12, 4, 5, 14, 34, 45],
                     help='augmentation procedure 0=none,1=flip,2=rot,3=flip LR, 12=flip+rot, 4=scale, 5=noise, 14=flip+scale, 34=flipLR+scale, 45=scale+noise (default: 0)')
-parser.add_argument('--balance', action='store_true',
-                    default=True, help='balance dataset (balance loss)')
-parser.add_argument('--lr_scheduler', action='store_true',
-                    default=False, help='decrease LR on platau')
-parser.add_argument('--early_stopping', action='store_true',
-                    default=False, help='use early stopping')
+parser.add_argument('--balance', action='store_true', default=False,
+                    help='balance dataset (balance loss)')
+# New flag: --oversample to trigger oversampling with a WeightedRandomSampler
+parser.add_argument('--oversample', action='store_true', default=False,
+                    help='use oversampling with a WeightedRandomSampler')
+parser.add_argument('--lr_scheduler', action='store_true', default=False,
+                    help='decrease LR on plateau')
+parser.add_argument('--early_stopping', action='store_true', default=False,
+                    help='use early stopping')
 parser.add_argument('--finetune', action='store_true', default=False,
-                    help='if set, only fine tune the classifier (fc) and freeze the backbone')
+                    help='if set, only fine tune the classifier (fc) and the last block of the feature extractor')
+parser.add_argument('--transfer_learning', action='store_true', default=False,
+                    help='if set, freeze the feature extractor and only train the classifier head')
+
 
 
 #Best hyperparameter from the study : 0.01 using SGD, ealy stopping, mini batch = 100
@@ -90,7 +105,7 @@ def main():
     print(args)
     best_auc = 0.
 
-    # Output directory and files
+    # Output directory creation
     if not os.path.isdir(args.output):
         try:
             os.mkdir(args.output)
@@ -99,10 +114,11 @@ def main():
         else:
             print('Successfully created the output directory "{}".'.format(args.output))
 
-    # Get model
-    model = utils.get_model()
+    # Instantiate the model using the new classifier architecture options.
+    model = utils.get_model(cls_arch=args.cls_arch, hidden_dim=args.hidden_dim, dropout=args.dropout)
+    
     if args.checkpoint:
-        ch = torch.load(args.checkpoint)
+        ch = torch.load(args.checkpoint, weights_only=False)
         model_dict = model.state_dict()
         if 'state_dict' in ch:
             pretrained_dict = {k: v for k, v in ch['state_dict'].items() if k in model_dict}
@@ -111,7 +127,6 @@ def main():
         print('Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
         model_dict.update(pretrained_dict)
         model.load_state_dict(model_dict)
-
 
     if args.resume:
         resume_path = os.path.join(args.output, 'checkpoint_split' + str(args.split_index) + '_run' + str(args.run) + '.pth')
@@ -125,23 +140,32 @@ def main():
         print('Loaded [{}/{}] keys from checkpoint'.format(len(pretrained_dict), len(model_dict)))
         model_dict.update(pretrained_dict)
         model.load_state_dict(model_dict)
+        
+    # Mutually exclusive mode: if transfer_learning is True, only unfreeze classifier head;
+    # if finetune is True (and transfer_learning is False), unfreeze the classifier head and the last block of the feature extractor.
+    if args.transfer_learning and args.finetune:
+        raise ValueError("Please choose only one mode: either transfer_learning or finetune, not both.")
 
-    # Fine-tuning option: freeze all layers except the classifier (model.fc)
-    if args.finetune:
+    if args.transfer_learning:
         for param in model.parameters():
-            param.requires_grad = False  # freeze all parameters
+            param.requires_grad = False
         for param in model.fc.parameters():
-            param.requires_grad = True   # unfreeze the classifier
-        print("Fine-tuning mode enabled: only training the classifier (fc) layer.")
-    else:
-        print("Training all layers (from scratch or retraining the full model).")
-
+            param.requires_grad = True
+        print("Transfer learning mode enabled: only classifier head is trainable.")
+    elif args.finetune:
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.fc.parameters():
+            param.requires_grad = True
+        for param in model.features[7].parameters():
+            param.requires_grad = True
+        print("Fine-tuning mode enabled: classifier head and last block of feature extractor are trainable.")
+        
     # Create optimizer only for parameters with requires_grad=True
     optimizer = utils.create_optimizer(
         list(filter(lambda p: p.requires_grad, model.parameters())),
         args.optimizer, args.lr, args.momentum, args.wd
     )
-
 
     # (Resume optimizer state if needed)
     cudnn.benchmark = True
@@ -176,6 +200,7 @@ def main():
     # Set datasets
     train_dset, trainval_dset, val_dset, _, balance_weight_neg_pos = dataset.get_datasets_singleview(
         transform, args.normalize, args.balance, args.split_index)
+    
     print('Datasets train:{}, val:{}'.format(
         len(train_dset.df), len(val_dset.df)))
     print(
@@ -189,6 +214,7 @@ def main():
         criterion = nn.BCEWithLogitsLoss(pos_weight=w).cuda()
     else:
         criterion = nn.BCEWithLogitsLoss().cuda()
+    
 
     # Early stopping
     lr_scheduler = None
@@ -217,7 +243,28 @@ def main():
     trainval_loader = torch.utils.data.DataLoader(trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
     val_loader = torch.utils.data.DataLoader(val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
 
-    
+
+
+    # -----------------------------
+    # Create training DataLoader: Use oversampling if --oversample flag is True
+    # -----------------------------
+    if args.oversample:
+        # Extract targets from training dataset
+        targets = [train_dset[i][1] for i in range(len(train_dset))]
+        class_counts = np.bincount(targets)
+        print("Class counts:", class_counts)
+        weights_per_class = 1.0 / class_counts
+        sample_weights = [weights_per_class[t] for t in targets]
+        sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
+        train_loader = torch.utils.data.DataLoader(train_dset, batch_size=args.batch_size, sampler=sampler, num_workers=args.workers)
+        print("Using oversampling with WeightedRandomSampler for training.")
+    else:
+        train_loader =torch.utils.data.DataLoader(train_dset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+
+    trainval_loader = torch.utils.data.DataLoader(trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    val_loader = torch.utils.data.DataLoader(val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+
     # Set output file for convergence
     convergence_name = 'convergence_split' + str(args.split_index) + '_run' + str(args.run) + '.csv'
     if not args.resume:

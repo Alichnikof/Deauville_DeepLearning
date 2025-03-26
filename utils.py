@@ -7,57 +7,63 @@ import torch.nn.functional as F
 import numpy as np
 
 
-def model_prediction(chpnt):
-    model = my_model()
-    ch = torch.load(chpnt)
+def model_prediction(chpnt, cls_arch="simple", hidden_dim=256, dropout=0.3):
+    model = my_model(cls_arch=cls_arch, hidden_dim=hidden_dim, dropout=dropout)
+    ch = torch.load(chpnt, weights_only=False)
     if 'state_dict' in ch:
         model.load_state_dict(ch['state_dict'])
     else:
         model.load_state_dict(ch)
-
     return model
 
-
-def get_model():
-    model = my_model()
+def get_model(cls_arch="simple", hidden_dim=256, dropout=0.3):
+    model = my_model(cls_arch=cls_arch, hidden_dim=hidden_dim, dropout=dropout)
     model = model.cuda()
     return model
 
-# Function that returns the model
-
-
 class my_model(nn.Module):
-    def __init__(self):
+    def __init__(self, cls_arch="simple", hidden_dim=256, dropout=0.3):
         super(my_model, self).__init__()
-        # CNN
-        model = models.resnet34(weights='DEFAULT')
-        conv1 = model._modules['conv1'].weight.detach(
-        ).clone().mean(dim=1, keepdim=True)
-        model._modules['conv1'] = nn.Conv2d(
-            1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        model._modules['conv1'].weight.data = conv1
-        model.fc = nn.Linear(model.fc.in_features, 2)
-        self.features = nn.Sequential(*list(model.children())[0:-1])
-        self.fc = list(model.children())[-1]
+        # Load a pretrained ResNet34 model
+        model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
+        
+        # Adapt the first convolutional layer to accept a single channel
+        conv1 = model.conv1.weight.detach().clone().mean(dim=1, keepdim=True)
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        model.conv1.weight.data = conv1
+        
+        # Extract all layers except the final fully-connected layer
+        self.features = nn.Sequential(*list(model.children())[:-1])
         self.flat = True
-
+        in_features = model.fc.in_features
+        
+        # Define the classifier head based on the chosen architecture
+        if cls_arch == "simple":
+            self.fc = nn.Linear(in_features, 2)
+        elif cls_arch == "complex":
+            self.fc = nn.Sequential(
+                nn.Linear(in_features, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, 2)
+            )
+        else:
+            raise ValueError("Invalid classifier architecture. Choose 'simple' or 'complex'.")
+    
     def forward(self, x):
-        f = self.features(x)
-        if self.flat:
-            f = f.view(x.size(0), -1)
-        o = self.fc(f)
-        if not self.flat:
-            o = o.view(x.size(0), -1)
-        return o
+        features = self.features(x)
+        # The ResNet34 features output is of shape (batch, in_features, 1, 1)
+        # so we can flatten directly:
+        features = features.view(features.size(0), -1)
+        out = self.fc(features)
+        return out
 
     def forward_feat(self, x):
-        f = self.features(x)
-        if self.flat:
-            f = f.view(x.size(0), -1)
-        o = self.fc(f)
-        if not self.flat:
-            o = o.view(x.size(0), -1)
-        return f, o
+        features = self.features(x)
+        features = features.view(features.size(0), -1)
+        out = self.fc(features)
+        return features, out
+
     
 class my_model_multitask(nn.Module):
         
@@ -65,7 +71,7 @@ class my_model_multitask(nn.Module):
             
         super(my_model_multitask, self).__init__()
         # Load a ResNet34 model pretrained on ImageNet.
-        model = models.resnet34(weights='DEFAULT')
+        model = models.resnet50(weights='DEFAULT')
         # Adjust the first conv layer to accept single-channel input.
         conv1 = model.conv1.weight.detach().clone().mean(dim=1, keepdim=True)
         model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)

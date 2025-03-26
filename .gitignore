@@ -28,4 +28,15 @@ thesis/
 results/
 pred/
 trained_model/
+training_results/
+training_resultsv0/
+test/
+trash/
+optuna/
+checkpoints/
+pred_training2/
+pred_training3/
+pred_training4/
+pred_training5/
+Run4/
 
