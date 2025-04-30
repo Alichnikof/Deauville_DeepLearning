@@ -71,7 +71,7 @@ class my_model_multitask(nn.Module):
             
         super(my_model_multitask, self).__init__()
         # Load a ResNet34 model pretrained on ImageNet.
-        model = models.resnet50(weights='DEFAULT')
+        model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT)
         # Adjust the first conv layer to accept single-channel input.
         conv1 = model.conv1.weight.detach().clone().mean(dim=1, keepdim=True)
         model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -85,8 +85,8 @@ class my_model_multitask(nn.Module):
         self.fc = nn.Linear(in_features, 2)
         
         # Additional classifier head for lesion localization (51 classes)
-        self.fc_loc = nn.Linear(in_features, 51)
-        
+        self.fc_loc = nn.Linear(in_features, 14)       
+         
         # Flag to indicate if we need to flatten the features (typically True)
         self.flat = True
 

@@ -86,10 +86,10 @@ def objective(trial, split_index):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Suggest hyperparameters.
-    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [16, 32, 64, 128])
     optimizer_name = trial.suggest_categorical("optimizer", ["sgd", "adam"])
-    wd = trial.suggest_float("wd", 1e-4, 1e-2, log=True)
+    wd = trial.suggest_float("wd", 1e-5, 1e-2, log=True)
     use_lr_scheduler = trial.suggest_categorical("lr_scheduler", [True, False])
     use_balance = trial.suggest_categorical("balance", [True, False])
     oversample = trial.suggest_categorical("oversample", [True, False])
@@ -165,7 +165,7 @@ def objective(trial, split_index):
     # --------------------------
     # Training loop.
     # --------------------------
-    num_epochs = 15  # Optimization runs for 10 epochs per trial.
+    num_epochs = 10  # Optimization runs for 10 epochs per trial.
     best_val_auc = 0.0
     
     for epoch in range(num_epochs):

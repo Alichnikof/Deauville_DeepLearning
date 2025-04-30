@@ -28,7 +28,7 @@ for f in files:
 
 # Best run in this folder
 DF = pd.concat(DF).reset_index(drop=True) 
-
+q
 grouped    = DF.groupby(['split'])
 maxidx     = grouped['value'].idxmax()
 dfbest     = DF.loc[maxidx]

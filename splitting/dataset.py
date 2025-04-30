@@ -10,9 +10,9 @@ from sklearn.metrics import roc_auc_score
 import torch.nn.functional as F
 from scipy import interpolate
 
-data_path_img = r"/home/mezher/Documents/Deauville_DeepLearning/splitting/"
+data_path_img = "/home/mezher/Documents/Deauville_DeepLearning/splitting/"
 
-data_file = r"/home/mezher/Documents/Deauville_DeepLearning/splitting/data_resplit.csv"
+data_file = "/home/mezher/Documents/Deauville_DeepLearning/splitting/data.csv"
 # this is the size (310x310) of the MIP images used in the paper. Adjust to fit your images.
 image_size = 310
 
@@ -22,8 +22,11 @@ def get_datasets_singleview(transform=None, norm=None, balance=False, split_inde
     split = 'split'+str(split_index)
     df = pd.read_csv(data_file)
     # Balance weight
-    weight_neg_pos = [1-(df.target == 0).sum()/len(df),
-                      1-(df.target == 1).sum()/len(df)]
+    # Balance weight: up-weight the rare positive in each channel
+    n0 = (df.target == 0).sum()    # count of “no-tumor”
+    n1 = (df.target == 1).sum()    # count of “tumor”
+    weight_neg_pos = [ n1 / n0,    # pos_weight for channel 0 (“no-tumor” logit)
+                       n0 / n1 ]   # pos_weight for channel 1 (“tumor” logit)
     # Read split
     df_train = df[df[split] == 'train'].drop(
         df.filter(regex='split').columns, axis=1)
@@ -70,9 +73,9 @@ def pad2square_center(image, size):
 
 
 def clip_and_normalize_SUVimage(img):
-    mu = 0.60872803532279
-    std = 1.8565245436133435
-    q = 20
+    mu = 0.608856246769287
+    std = 1.8574714714578435
+    q = 30
     img = np.clip(img, 0., q)
     return (img-mu)/std
 

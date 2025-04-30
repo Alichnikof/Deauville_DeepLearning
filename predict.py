@@ -70,20 +70,26 @@ def predict(dset, model):
     out['probs'] = probs
     feats = pd.DataFrame(feats, columns=['F{}'.format(x) for x in range(1, args.nfeat+1)])
     out = pd.concat([out, feats], axis=1)
+    
     return out
 
 def test(loader, model):
     model.eval()
-    probs = torch.FloatTensor(len(loader.dataset)).cuda()
-    feats = np.empty((len(loader.dataset), args.nfeat))
+    all_probs = []
+    all_feats = []
+
     with torch.no_grad():
-        for i, (input, _) in enumerate(loader):
+        for input, _ in loader:
             input = input.cuda()
             f, output = model.forward_feat(input)
             output = F.softmax(output, dim=1)
-            feats[i*args.batch_size:i*args.batch_size+input.size(0), :] = f.detach().cpu().numpy()
-            probs[i*args.batch_size:i*args.batch_size+input.size(0)] = output.detach()[:, 1].clone()
-    return probs.cpu().numpy(), feats
+            all_probs.append(output[:, 1].detach().cpu().numpy())
+            all_feats.append(f.detach().cpu().numpy())
+
+    probs = np.concatenate(all_probs)
+    feats = np.concatenate(all_feats)
+    return probs, feats
+
 
 if __name__ == '__main__':
     main()

@@ -238,10 +238,6 @@ def main():
             early_stopping.early_stop = ch['early_stopping']['early_stop']
             print('Loaded early_stopping state')
 
-    # Set loaders
-    train_loader = torch.utils.data.DataLoader(train_dset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    trainval_loader = torch.utils.data.DataLoader(trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
-    val_loader = torch.utils.data.DataLoader(val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
 
 
 
@@ -263,6 +259,9 @@ def main():
 
     trainval_loader = torch.utils.data.DataLoader(trainval_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
     val_loader = torch.utils.data.DataLoader(val_dset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+
+
+
 
 
     # Set output file for convergence
@@ -344,22 +343,19 @@ def main():
 
 
 def test(epoch, loader, model):
-    # Set model in test mode
     model.eval()
-    # Initialize probability vector
-    probs = torch.FloatTensor(len(loader.dataset)).cuda()
-    # Loop through batches
+    all_probs = []
     with torch.no_grad():
-        for i, (input, _) in enumerate(loader):
-            # Copy batch to GPU
+        for input, _ in loader:
             input = input.cuda()
             # Forward pass
-            y = model(input)  # features, probabilities
+            y = model(input)  # Assumes model outputs logits
             p = F.softmax(y, dim=1)
-            # Clone output to output vector
-            probs[i*args.batch_size:i*args.batch_size +
-                  input.size(0)] = p.detach()[:, 1].clone()
-    return probs.cpu().numpy()
+            # Append the probabilities for class '1'
+            all_probs.append(p.detach()[:, 1].cpu().numpy())
+    # Concatenate along the first axis; this will preserve the order returned by the DataLoader.
+    probs = np.concatenate(all_probs)
+    return probs
 
 
 def train(epoch, loader, model, criterion, optimizer):
